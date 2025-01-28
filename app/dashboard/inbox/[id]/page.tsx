@@ -5,16 +5,44 @@ import { notFound, redirect } from "next/navigation";
 import { Appeal } from "../appeal";
 import { subDays } from "date-fns";
 import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { formatRecordUserCompact } from "@/lib/record-user";
 
 const HISTORY_DAYS = 7;
 
-const Inbox = async (props: { params: Promise<{ id: string }> }) => {
-  const params = await props.params;
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { orgId } = await auth();
   if (!orgId) {
     redirect("/");
   }
-  const { id } = params;
+
+  const id = (await params).id;
+
+  const appeal = await db.query.appeals.findFirst({
+    where: and(eq(schema.appeals.clerkOrganizationId, orgId), eq(schema.appeals.id, id)),
+    with: {
+      recordUserAction: {
+        with: {
+          recordUser: true,
+        },
+      },
+    },
+  });
+
+  if (!appeal) {
+    return notFound();
+  }
+
+  return {
+    title: `Appeal from ${formatRecordUserCompact(appeal.recordUserAction.recordUser)} | Iffy`,
+  };
+}
+
+export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+  const { orgId } = await auth();
+  if (!orgId) {
+    redirect("/");
+  }
+  const id = (await params).id;
 
   const appealWithMessages = await db.query.appeals.findFirst({
     where: and(eq(schema.appeals.clerkOrganizationId, orgId), eq(schema.appeals.id, id)),
@@ -82,6 +110,4 @@ const Inbox = async (props: { params: Promise<{ id: string }> }) => {
       userActions={userActions}
     />
   );
-};
-
-export default Inbox;
+}
