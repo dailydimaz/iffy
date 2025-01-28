@@ -1,6 +1,5 @@
 import db from "@/db";
 import { and, desc, eq, sql } from "drizzle-orm";
-import OpenAI from "openai";
 import { findOrCreateOrganizationSettings } from "./organization-settings";
 import { env } from "@/lib/env";
 import { inngest } from "@/inngest/client";
@@ -49,10 +48,6 @@ export const getRecordContent = (record: {
     })),
   ];
 };
-
-const openai = new OpenAI({
-  apiKey: env.OPENAI_API_KEY,
-});
 
 export async function createModeration({
   clerkOrganizationId,
