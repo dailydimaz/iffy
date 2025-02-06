@@ -10,7 +10,7 @@ type PublicUser = {
   id: string;
   clientId: string;
   clientUrl?: string;
-  status?: (typeof schema.recordUserActionStatus.enumValues)[number];
+  status?: (typeof schema.userActionStatus.enumValues)[number];
   protected: boolean;
 };
 
