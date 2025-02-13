@@ -27,104 +27,112 @@ export async function createOrUpdateRecord({
   userId?: string;
   createdAt?: Date;
 }) {
-  const lastRecord = await db.query.records.findFirst({
-    where: and(eq(schema.records.clerkOrganizationId, clerkOrganizationId), eq(schema.records.clientId, clientId)),
-    columns: {
-      userId: true,
-    },
-  });
+  const record = await db.transaction(async (tx) => {
+    const lastRecord = await tx.query.records.findFirst({
+      where: and(eq(schema.records.clerkOrganizationId, clerkOrganizationId), eq(schema.records.clientId, clientId)),
+      columns: {
+        userId: true,
+      },
+    });
 
-  const [record] = await db
-    .insert(schema.records)
-    .values({
-      clerkOrganizationId,
-      clientId,
-      clientUrl,
-      name,
-      entity,
-      text,
-      imageUrls,
-      externalUrls,
-      userId,
-      createdAt,
-    })
-    .onConflictDoUpdate({
-      target: schema.records.clientId,
-      set: {
+    const [record] = await tx
+      .insert(schema.records)
+      .values({
+        clerkOrganizationId,
+        clientId,
+        clientUrl,
         name,
         entity,
         text,
         imageUrls,
         externalUrls,
-        clientUrl,
         userId,
-      },
-    })
-    .returning();
-
-  if (!record) {
-    throw new Error("Failed to upsert record");
-  }
-
-  if (record.moderationStatus === "Flagged") {
-    const userRemoved = !!lastRecord?.userId && !record.userId;
-    const userAdded = !lastRecord?.userId && !!record.userId;
-    const userChanged = !!lastRecord?.userId && !!record.userId && lastRecord.userId !== record.userId;
-
-    if (userRemoved || userChanged) {
-      await db
-        .update(schema.users)
-        .set({
-          flaggedRecordsCount: sql`${schema.users.flaggedRecordsCount} - 1`,
-        })
-        .where(and(eq(schema.users.clerkOrganizationId, clerkOrganizationId), eq(schema.users.id, lastRecord.userId!)));
-    }
-
-    if (userAdded || userChanged) {
-      await db
-        .update(schema.users)
-        .set({
-          flaggedRecordsCount: sql`${schema.users.flaggedRecordsCount} + 1`,
-        })
-        .where(and(eq(schema.users.clerkOrganizationId, clerkOrganizationId), eq(schema.users.id, record.userId!)));
-    }
-  }
-
-  return record;
-}
-
-export async function deleteRecord(clerkOrganizationId: string, recordId: string) {
-  const [record] = await db
-    .update(schema.records)
-    .set({
-      deletedAt: new Date(),
-    })
-    .where(and(eq(schema.records.clerkOrganizationId, clerkOrganizationId), eq(schema.records.id, recordId)))
-    .returning();
-
-  if (!record) {
-    throw new Error("Failed to delete record");
-  }
-
-  if (record.userId && record.moderationStatus === "Flagged") {
-    await db
-      .update(schema.users)
-      .set({
-        flaggedRecordsCount: sql`${schema.users.flaggedRecordsCount} - 1`,
+        createdAt,
       })
-      .where(and(eq(schema.users.clerkOrganizationId, clerkOrganizationId), eq(schema.users.id, record.userId)));
-  }
+      .onConflictDoUpdate({
+        target: schema.records.clientId,
+        set: {
+          name,
+          entity,
+          text,
+          imageUrls,
+          externalUrls,
+          clientUrl,
+          userId,
+        },
+      })
+      .returning();
+
+    if (!record) {
+      throw new Error("Failed to upsert record");
+    }
+
+    if (record.moderationStatus === "Flagged") {
+      const userRemoved = !!lastRecord?.userId && !record.userId;
+      const userAdded = !lastRecord?.userId && !!record.userId;
+      const userChanged = !!lastRecord?.userId && !!record.userId && lastRecord.userId !== record.userId;
+
+      if (userRemoved || userChanged) {
+        await tx
+          .update(schema.users)
+          .set({
+            flaggedRecordsCount: sql`${schema.users.flaggedRecordsCount} - 1`,
+          })
+          .where(
+            and(eq(schema.users.clerkOrganizationId, clerkOrganizationId), eq(schema.users.id, lastRecord.userId!)),
+          );
+      }
+
+      if (userAdded || userChanged) {
+        await tx
+          .update(schema.users)
+          .set({
+            flaggedRecordsCount: sql`${schema.users.flaggedRecordsCount} + 1`,
+          })
+          .where(and(eq(schema.users.clerkOrganizationId, clerkOrganizationId), eq(schema.users.id, record.userId!)));
+      }
+    }
+
+    return record;
+  });
 
   try {
     await inngest.send({
       name: "record/deleted",
-      data: { clerkOrganizationId, id: recordId },
+      data: { clerkOrganizationId, id: record.id },
     });
   } catch (error) {
     console.error(error);
   }
 
   return record;
+}
+
+export async function deleteRecord(clerkOrganizationId: string, recordId: string) {
+  return await db.transaction(async (tx) => {
+    const [record] = await tx
+      .update(schema.records)
+      .set({
+        deletedAt: new Date(),
+      })
+      .where(and(eq(schema.records.clerkOrganizationId, clerkOrganizationId), eq(schema.records.id, recordId)))
+      .returning();
+
+    if (!record) {
+      throw new Error("Failed to delete record");
+    }
+
+    if (record.userId && record.moderationStatus === "Flagged") {
+      await tx
+        .update(schema.users)
+        .set({
+          flaggedRecordsCount: sql`${schema.users.flaggedRecordsCount} - 1`,
+        })
+        .where(and(eq(schema.users.clerkOrganizationId, clerkOrganizationId), eq(schema.users.id, record.userId)));
+    }
+
+    return record;
+  });
 }
 
 export function getRecordUrls({ text, externalUrls }: { text: string; externalUrls?: string[] }) {

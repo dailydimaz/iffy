@@ -18,56 +18,51 @@ export async function createAppealAction({
   appealId: string;
   status: ActionStatus;
 } & ViaWithClerkUserOrUser) {
-  const lastAction = await db.query.appealActions.findFirst({
-    where: and(
-      eq(schema.appealActions.clerkOrganizationId, clerkOrganizationId),
-      eq(schema.appealActions.appealId, appealId),
-    ),
-    orderBy: desc(schema.appealActions.createdAt),
-    columns: {
-      status: true,
-    },
+  const [appealAction, lastAppealAction] = await db.transaction(async (tx) => {
+    const lastAppealAction = await tx.query.appealActions.findFirst({
+      where: and(
+        eq(schema.appealActions.clerkOrganizationId, clerkOrganizationId),
+        eq(schema.appealActions.appealId, appealId),
+      ),
+      orderBy: desc(schema.appealActions.createdAt),
+      columns: {
+        id: true,
+        status: true,
+      },
+    });
+
+    if (lastAppealAction?.status === status) {
+      return [lastAppealAction, undefined];
+    }
+
+    const [appealAction] = await tx
+      .insert(schema.appealActions)
+      .values({
+        clerkOrganizationId,
+        status,
+        appealId,
+        via,
+        clerkUserId,
+      })
+      .returning();
+
+    if (!appealAction) {
+      throw new Error("Failed to create appeal action");
+    }
+
+    // sync the record user status with the new status
+    await tx
+      .update(schema.appeals)
+      .set({
+        actionStatus: status,
+        actionStatusCreatedAt: appealAction.createdAt,
+      })
+      .where(and(eq(schema.appeals.clerkOrganizationId, clerkOrganizationId), eq(schema.appeals.id, appealId)));
+
+    return [appealAction, lastAppealAction];
   });
 
-  if (lastAction?.status === status) {
-    return lastAction;
-  }
-
-  const [appealAction] = await db
-    .insert(schema.appealActions)
-    .values({
-      clerkOrganizationId,
-      status,
-      appealId,
-      via,
-      clerkUserId,
-    })
-    .returning();
-
-  if (!appealAction) {
-    throw new Error("Failed to create appeal action");
-  }
-
-  const appeal = await db.query.appeals.findFirst({
-    where: and(eq(schema.appeals.clerkOrganizationId, clerkOrganizationId), eq(schema.appeals.id, appealId)),
-    columns: {
-      actionStatus: true,
-    },
-  });
-
-  // read the last status from the record user
-  const lastStatus = appeal?.actionStatus;
-
-  // sync the record user status with the new status
-  await db
-    .update(schema.appeals)
-    .set({
-      actionStatus: status,
-      actionStatusCreatedAt: appealAction.createdAt,
-    })
-    .where(and(eq(schema.appeals.clerkOrganizationId, clerkOrganizationId), eq(schema.appeals.id, appealId)));
-
-  if (status !== lastStatus) {
+  if (status !== lastAppealAction?.status) {
     try {
       await inngest.send({
         name: "appeal-action/status-changed",
@@ -76,7 +71,7 @@ export async function createAppealAction({
           id: appealAction.id,
           appealId,
           status,
-          lastStatus: lastStatus ?? null,
+          lastStatus: lastAppealAction?.status ?? null,
         },
       });
     } catch (error) {

@@ -17,61 +17,66 @@ export async function createUserAction({
   userId: string;
   status: ActionStatus;
 } & ViaWithClerkUserOrUser) {
-  const user = await db.query.users.findFirst({
-    where: and(eq(schema.users.clerkOrganizationId, clerkOrganizationId), eq(schema.users.id, userId)),
-    columns: {
-      protected: true,
-    },
+  const [userAction, lastUserAction] = await db.transaction(async (tx) => {
+    const user = await tx.query.users.findFirst({
+      where: and(eq(schema.users.clerkOrganizationId, clerkOrganizationId), eq(schema.users.id, userId)),
+      columns: {
+        protected: true,
+      },
+    });
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    if (user.protected && status !== "Compliant") {
+      throw new Error("User is protected");
+    }
+
+    const lastUserAction = await tx.query.userActions.findFirst({
+      where: and(
+        eq(schema.userActions.clerkOrganizationId, clerkOrganizationId),
+        eq(schema.userActions.userId, userId),
+      ),
+      orderBy: desc(schema.userActions.createdAt),
+      columns: {
+        id: true,
+        status: true,
+      },
+    });
+
+    if (lastUserAction?.status === status) {
+      return [lastUserAction, undefined];
+    }
+
+    const [userAction] = await tx
+      .insert(schema.userActions)
+      .values({
+        clerkOrganizationId,
+        status,
+        userId,
+        via,
+        clerkUserId,
+      })
+      .returning();
+
+    if (!userAction) {
+      throw new Error("Failed to create user action");
+    }
+
+    // sync the record user status with the new status
+    await tx
+      .update(schema.users)
+      .set({
+        actionStatus: status,
+        actionStatusCreatedAt: userAction.createdAt,
+      })
+      .where(and(eq(schema.users.clerkOrganizationId, clerkOrganizationId), eq(schema.users.id, userId)));
+
+    return [userAction, lastUserAction];
   });
 
-  if (!user) {
-    throw new Error("User not found");
-  }
-
-  if (user.protected && status !== "Compliant") {
-    throw new Error("User is protected");
-  }
-
-  const lastAction = await db.query.userActions.findFirst({
-    where: and(eq(schema.userActions.clerkOrganizationId, clerkOrganizationId), eq(schema.userActions.userId, userId)),
-    orderBy: desc(schema.userActions.createdAt),
-    columns: {
-      status: true,
-    },
-  });
-
-  // read the last status
-  const lastStatus = lastAction?.status;
-
-  if (lastStatus === status) {
-    return lastAction;
-  }
-
-  const [userAction] = await db
-    .insert(schema.userActions)
-    .values({
-      clerkOrganizationId,
-      status,
-      userId,
-      via,
-      clerkUserId,
-    })
-    .returning();
-
-  if (!userAction) {
-    throw new Error("Failed to create user action");
-  }
-
-  // sync the record user status with the new status
-  await db
-    .update(schema.users)
-    .set({
-      actionStatus: status,
-      actionStatusCreatedAt: userAction.createdAt,
-    })
-    .where(and(eq(schema.users.clerkOrganizationId, clerkOrganizationId), eq(schema.users.id, userId)));
-
-  if (status !== lastStatus) {
+  if (status !== lastUserAction?.status) {
     try {
       await inngest.send({
         name: "user-action/status-changed",
@@ -80,13 +85,11 @@ export async function createUserAction({
           id: userAction.id,
           userId,
           status,
-          lastStatus: lastStatus ?? null,
+          lastStatus: lastUserAction?.status ?? null,
         },
       });
     } catch (error) {
       console.error(error);
     }
   }
-
-  return userAction;
 }
