@@ -139,6 +139,6 @@
     "next": "15.1.5"
   },
   "optionalDependencies": {
-    "@tailwindcss/oxide-linux-arm64-gnu": "^4.0.9"
+    "@tailwindcss/oxide-linux-x64-gnu": "^4.0.9"
   }
 }
