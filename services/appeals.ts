@@ -1,13 +1,23 @@
 import db from "@/db";
 import * as schema from "@/db/schema";
 import { eq, desc, and, sql, count } from "drizzle-orm";
-import crypto from "crypto";
-import { createMessage } from "./messages";
-import { createAppealAction } from "./appeal-actions";
+import * as crypto from "crypto";
 import { env } from "@/lib/env";
 import { inngest } from "@/inngest/client";
+import { deriveSecret } from "@/lib/crypto";
 
 export function generateAppealToken(userId: string) {
+  if (!env.SECRET_KEY) {
+    throw new Error("SECRET_KEY is not set");
+  }
+
+  const derivedKey = deriveSecret(env.SECRET_KEY, `appeal-token`);
+  const signature = crypto.createHmac("sha256", derivedKey).update(userId).digest("hex");
+
+  return `${userId}-${signature}`;
+}
+
+export function generateLegacyAppealToken(userId: string) {
   if (!env.APPEAL_ENCRYPTION_KEY) {
     throw new Error("APPEAL_ENCRYPTION_KEY is not set");
   }
@@ -20,11 +30,17 @@ export function validateAppealToken(token: string): [isValid: false, userId: nul
   if (!userId) {
     return [false, null];
   }
-  const isValid = token === generateAppealToken(userId);
-  if (!isValid) {
-    return [false, null];
+
+  if (token === generateAppealToken(userId)) {
+    return [true, userId];
   }
-  return [true, userId];
+
+  // TODO(s3ththompson): Remove once all old appeals have been closed
+  if (token === generateLegacyAppealToken(userId)) {
+    return [true, userId];
+  }
+
+  return [false, null];
 }
 
 export async function createAppeal({ userId, text }: { userId: string; text: string }) {
