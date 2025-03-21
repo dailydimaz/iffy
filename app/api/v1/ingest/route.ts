@@ -4,27 +4,32 @@ import { IngestDeleteRequestData, ingestUpdateAdapter, IngestUpdateRequestData }
 import db from "@/db";
 import * as schema from "@/db/schema";
 import { eq, and } from "drizzle-orm";
-import { validateApiKey } from "@/services/api-keys";
 import { createPendingModeration } from "@/services/moderations";
 import { createOrUpdateUser } from "@/services/users";
 import { createOrUpdateRecord, deleteRecord } from "@/services/records";
 import { inngest } from "@/inngest/client";
 import { parseRequestBody } from "@/app/api/parse";
+import { findOrCreateOrganization } from "@/services/organizations";
+import { authenticateRequest } from "../../auth";
+import { hasActiveSubscription } from "@/services/stripe/subscriptions";
+import { env } from "@/lib/env";
 
 export async function POST(req: NextRequest) {
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return NextResponse.json({ error: { message: "Invalid API key" } }, { status: 401 });
-  }
-  const apiKey = authHeader.split(" ")[1];
-  const clerkOrganizationId = await validateApiKey(apiKey);
-  if (!clerkOrganizationId) {
+  const [isValid, clerkOrganizationId] = await authenticateRequest(req);
+  if (!isValid) {
     return NextResponse.json({ error: { message: "Invalid API key" } }, { status: 401 });
   }
 
   const { data, error } = await parseRequestBody(req, IngestUpdateRequestData, ingestUpdateAdapter);
   if (error) {
     return NextResponse.json({ error }, { status: 400 });
+  }
+
+  if (env.ENABLE_BILLING && !(await hasActiveSubscription(clerkOrganizationId))) {
+    return NextResponse.json(
+      { error: { message: "No active subscription. Please sign up for a subscription." } },
+      { status: 403 },
+    );
   }
 
   let user: typeof schema.users.$inferSelect | undefined;
@@ -57,9 +62,7 @@ export async function POST(req: NextRequest) {
     metadata: data.metadata,
   });
 
-  const organizationSettings = await db.query.organizationSettings.findFirst({
-    where: eq(schema.organizationSettings.clerkOrganizationId, clerkOrganizationId),
-  });
+  const organization = await findOrCreateOrganization(clerkOrganizationId);
 
   let moderationThreshold = false;
 
@@ -74,7 +77,7 @@ export async function POST(req: NextRequest) {
   }
 
   // moderate based on configured percentage
-  if (organizationSettings && Math.random() * 100 < organizationSettings.moderationPercentage) {
+  if (organization && Math.random() * 100 < organization.moderationPercentage) {
     moderationThreshold = true;
   }
 
@@ -91,6 +94,14 @@ export async function POST(req: NextRequest) {
         data: {
           clerkOrganizationId,
           moderationId: pendingModeration.id,
+          recordId: record.id,
+        },
+      });
+      await inngest.send({
+        name: "moderation/usage",
+        data: {
+          clerkOrganizationId,
+          id: pendingModeration.id,
           recordId: record.id,
         },
       });
@@ -111,13 +122,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return NextResponse.json({ error: { message: "Invalid API key" } }, { status: 401 });
-  }
-  const apiKey = authHeader.split(" ")[1];
-  const clerkOrganizationId = await validateApiKey(apiKey);
-  if (!clerkOrganizationId) {
+  const [isValid, clerkOrganizationId] = await authenticateRequest(req);
+  if (!isValid) {
     return NextResponse.json({ error: { message: "Invalid API key" } }, { status: 401 });
   }
 

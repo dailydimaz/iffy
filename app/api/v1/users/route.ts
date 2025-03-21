@@ -5,11 +5,11 @@ import { SQL } from "drizzle-orm";
 
 import db from "@/db";
 import * as schema from "@/db/schema";
-import { validateApiKey } from "@/services/api-keys";
 import { parseQueryParams } from "@/app/api/parse";
-import { findOrCreateOrganizationSettings } from "@/services/organization-settings";
+import { findOrCreateOrganization } from "@/services/organizations";
 import { getAbsoluteUrl } from "@/lib/url";
 import { generateAppealToken } from "@/services/appeals";
+import { authenticateRequest } from "../../auth";
 
 const ListUsersRequestData = z.object({
   limit: z.coerce.number().min(1).max(100).default(10),
@@ -22,13 +22,8 @@ const ListUsersRequestData = z.object({
 });
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return NextResponse.json({ error: { message: "Invalid API key" } }, { status: 401 });
-  }
-  const apiKey = authHeader.split(" ")[1];
-  const clerkOrganizationId = await validateApiKey(apiKey);
-  if (!clerkOrganizationId) {
+  const [isValid, clerkOrganizationId] = await authenticateRequest(req);
+  if (!isValid) {
     return NextResponse.json({ error: { message: "Invalid API key" } }, { status: 401 });
   }
 
@@ -37,7 +32,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error }, { status: 400 });
   }
 
-  const organizationSettings = await findOrCreateOrganizationSettings(clerkOrganizationId);
+  const organization = await findOrCreateOrganization(clerkOrganizationId);
 
   const { limit, starting_after, ending_before, email, clientId, status, user } = data;
 
@@ -117,7 +112,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     data: users.map((user) => {
       const appealUrl =
-        organizationSettings.appealsEnabled && user.actionStatus === "Suspended"
+        organization.appealsEnabled && user.actionStatus === "Suspended"
           ? getAbsoluteUrl(`/appeal?token=${generateAppealToken(user.id)}`)
           : null;
       return { ...user, appealUrl };

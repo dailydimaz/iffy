@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import db from "@/db";
 import * as schema from "@/db/schema";
 import { decrypt } from "@/services/encrypt";
-import { getPaymentsAndPayouts } from "@/services/stripe";
+import { getPaymentsAndPayouts } from "@/services/stripe/accounts";
 import { eq } from "drizzle-orm";
 import { Suspense } from "react";
 
@@ -71,8 +71,8 @@ export async function StripeAccount({
   clerkOrganizationId: string;
   stripeAccountId: string;
 }) {
-  const result = await db.query.organizationSettings.findFirst({
-    where: eq(schema.organizationSettings.clerkOrganizationId, clerkOrganizationId),
+  const result = await db.query.organizations.findFirst({
+    where: eq(schema.organizations.clerkOrganizationId, clerkOrganizationId),
   });
 
   const stripeApiKey = result?.stripeApiKey ? decrypt(result.stripeApiKey) : null;

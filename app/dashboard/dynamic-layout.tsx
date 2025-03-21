@@ -3,13 +3,24 @@
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
-import { ClerkLoaded, ClerkLoading, OrganizationSwitcher } from "@clerk/nextjs";
+import { ClerkLoaded, ClerkLoading, OrganizationSwitcher, SignOutButton } from "@clerk/nextjs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Separator } from "@/components/ui/separator";
-import { MessageSquareX, LucideIcon, Book, Inbox, Code, Users, Mail, Settings, ChartBar } from "lucide-react";
+import {
+  MessageSquareX,
+  LucideIcon,
+  Book,
+  Inbox,
+  Code,
+  Users,
+  Mail,
+  Settings,
+  ChartBar,
+  CreditCard,
+} from "lucide-react";
 import Link from "next/link";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { useSelectedLayoutSegment } from "next/navigation";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/toaster";
@@ -17,21 +28,23 @@ import { Logo } from "@/components/logo";
 import { Badge } from "@/components/ui/badge";
 import * as schema from "@/db/schema";
 
-type OrganizationSettings = typeof schema.organizationSettings.$inferSelect;
+type organization = typeof schema.organizations.$inferSelect;
 
 export default function DynamicLayout({
   children,
-  organizationSettings,
+  organization,
   inboxCount,
+  showSubscription,
 }: Readonly<{
   children: React.ReactNode;
-  organizationSettings: OrganizationSettings;
+  organization: organization;
   inboxCount: number;
+  showSubscription: boolean;
 }>) {
   const [isCollapsed, setIsCollapsed] = React.useState(false);
 
   const navLinks = [
-    ...(organizationSettings.appealsEnabled
+    ...(organization.appealsEnabled
       ? [
           {
             title: "Inbox",
@@ -64,7 +77,7 @@ export default function DynamicLayout({
       icon: ChartBar,
       slug: "analytics",
     },
-    ...(organizationSettings.emailsEnabled
+    ...(organization.emailsEnabled
       ? [
           {
             title: "Emails",
@@ -83,6 +96,15 @@ export default function DynamicLayout({
       icon: Settings,
       slug: "settings",
     },
+    ...(showSubscription
+      ? [
+          {
+            title: "Subscription",
+            icon: CreditCard,
+            slug: "subscription",
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -126,15 +148,20 @@ export default function DynamicLayout({
           <ResizableHandle withHandle className="dark:bg-green-900" />
           <ResizablePanel defaultSize={80}>
             <div className={cn("flex h-[52px] items-center justify-end px-4 dark:bg-zinc-900")}>
-              <ClerkLoading>
-                <Skeleton className="mr-2 h-[20px] w-[125px] rounded-sm" />
-              </ClerkLoading>
-              <ClerkLoaded>
-                <OrganizationSwitcher
-                  appearance={{ elements: { organizationSwitcherTrigger: "dark:text-white" } }}
-                  hidePersonal={true}
-                />
-              </ClerkLoaded>
+              <div className="flex gap-2">
+                <ClerkLoading>
+                  <Skeleton className="mr-2 h-[20px] w-[125px] rounded-sm" />
+                </ClerkLoading>
+                <ClerkLoaded>
+                  <Button asChild variant="ghost" size="sm">
+                    <SignOutButton />
+                  </Button>
+                  <OrganizationSwitcher
+                    appearance={{ elements: { organizationSwitcherTrigger: "dark:text-white" } }}
+                    hidePersonal={true}
+                  />
+                </ClerkLoaded>
+              </div>
             </div>
             <Separator />
             <div className="h-[calc(100%-52px-1px)] overflow-y-scroll dark:bg-zinc-900">{children}</div>
