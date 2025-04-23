@@ -29,18 +29,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const passthrough = data.passthrough;
+
   let userRecord: typeof schema.userRecords.$inferSelect | undefined;
   if (data.user) {
     userRecord = await createOrUpdateUserRecord({
       clerkOrganizationId,
       clientId: data.user.clientId,
       clientUrl: data.user.clientUrl,
-      email: data.user.email,
-      name: data.user.name,
-      username: data.user.username,
       initialProtected: data.user.protected,
       stripeAccountId: data.user.stripeAccountId,
       metadata: data.user.metadata,
+      ...(passthrough ? {} : { email: data.user.email, name: data.user.name, username: data.user.username }),
     });
   }
 
@@ -49,13 +49,13 @@ export async function POST(req: NextRequest) {
   const record = await createOrUpdateRecord({
     clerkOrganizationId,
     clientId: data.clientId,
-    name: data.name,
     entity: data.entity,
-    text: content.text,
-    imageUrls: content.imageUrls,
     clientUrl: data.clientUrl,
     userRecordId: userRecord?.id,
     metadata: data.metadata,
+    ...(passthrough
+      ? {}
+      : { name: data.name, text: content.text, imageUrls: content.imageUrls, externalUrls: content.externalUrls }),
   });
 
   if (record.protected) {
@@ -71,6 +71,14 @@ export async function POST(req: NextRequest) {
   const result = await moderate({
     clerkOrganizationId,
     recordId: record.id,
+    passthroughContext: passthrough
+      ? {
+          name: data.name,
+          text: content.text,
+          imageUrls: content.imageUrls ?? [],
+          externalUrls: content.externalUrls ?? [],
+        }
+      : undefined,
   });
 
   const moderation = await createModeration({
