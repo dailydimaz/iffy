@@ -64,7 +64,17 @@ export class Strategy implements StrategyInstance {
 
     const moderation = await openai.moderations.create({
       model: MODEL,
-      input: context.record.text.substring(0, MAX_INPUT_LENGTH),
+      input: (() => {
+        const originalText = context.record.text;
+        if (originalText.length > MAX_INPUT_LENGTH) {
+          console.warn(
+            `Content truncated from ${originalText.length} to ${MAX_INPUT_LENGTH} characters for moderation`
+          );
+          // Consider analyzing both beginning and end portions for comprehensive coverage
+          return originalText.substring(0, MAX_INPUT_LENGTH);
+        }
+        return originalText;
+      })(),
     });
 
     const result = moderation.results[0];
